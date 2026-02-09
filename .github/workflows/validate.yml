@@ -1,0 +1,113 @@
+name: Validate Install Source Detection
+
+on:
+  workflow_dispatch:
+    inputs:
+      prek_ref:
+        description: "prek branch, tag, or SHA to build from"
+        required: false
+        default: "feat/expand-install-source-detection"
+
+permissions: {}
+
+env:
+  NO_COLOR: "1"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout prek
+        uses: actions/checkout@v4
+        with:
+          repository: shaanmajid/prek
+          ref: ${{ inputs.prek_ref || 'feat/expand-install-source-detection' }}
+          path: prek
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.93"
+          components: clippy
+
+      - name: Cache cargo dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: prek
+
+      - name: Run clippy
+        working-directory: prek
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+      - name: Run install_source unit tests
+        working-directory: prek
+        run: cargo test install_source
+
+      - name: Build prek (without self-update feature)
+        working-directory: prek
+        run: cargo build --profile fast-build --bin prek
+
+      - name: Sanity check — self update fails
+        working-directory: prek
+        run: |
+          output=$(./target/fast-build/prek self update --color never 2>&1) && exit 1 || true
+          echo "$output"
+          echo "$output" | grep -q "cannot self-update"
+
+      - name: Build Python wheel
+        working-directory: prek
+        run: |
+          pip install maturin
+          maturin build --out dist
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: prek-binary
+          path: prek/target/fast-build/prek
+
+      - name: Upload wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: prek-wheel
+          path: prek/dist/*.whl
+
+  path-simulation:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout test repo
+        uses: actions/checkout@v4
+
+      - name: Download binary
+        uses: actions/download-artifact@v4
+        with:
+          name: prek-binary
+
+      - name: Make binary executable
+        run: chmod +x prek
+
+      - name: Run path simulation tests
+        run: bash scripts/validate-path-simulation.sh ./prek
+
+  real-install:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout test repo
+        uses: actions/checkout@v4
+
+      - name: Download wheel
+        uses: actions/download-artifact@v4
+        with:
+          name: prek-wheel
+          path: dist
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install pipx
+        run: pip install pipx
+
+      - name: Run real install tests
+        run: bash scripts/validate-real-install.sh dist
