@@ -78,19 +78,26 @@ echo ""
 echo "=== Testing pipx install ==="
 pipx install --force "$WHEEL"
 
-# Find the installed binary
+# Find the installed binary via pipx's own environment info
+PIPX_VENVS=$(pipx environment --value PIPX_LOCAL_VENVS 2>/dev/null || echo "")
 PIPX_PREK=""
-for candidate in \
-    "$HOME/.local/share/pipx/venvs/prek/bin/prek" \
-    "$HOME/.local/pipx/venvs/prek/bin/prek"; do
-    if [ -x "$candidate" ]; then
-        PIPX_PREK="$candidate"
-        break
+
+if [ -n "$PIPX_VENVS" ] && [ -x "$PIPX_VENVS/prek/bin/prek" ]; then
+    PIPX_PREK="$PIPX_VENVS/prek/bin/prek"
+else
+    # Fallback: resolve the symlink from ~/.local/bin/prek
+    if command -v prek &>/dev/null; then
+        real=$(realpath "$(command -v prek)")
+        if echo "$real" | grep -q "pipx/venvs/prek"; then
+            PIPX_PREK="$real"
+        fi
     fi
-done
+fi
 
 if [ -z "$PIPX_PREK" ]; then
     echo "FAIL [pipx]: could not locate installed binary"
+    echo "  PIPX_LOCAL_VENVS=$PIPX_VENVS"
+    echo "  which prek=$(command -v prek 2>/dev/null || echo 'not found')"
     FAIL=$((FAIL + 1))
 else
     echo "Found pipx binary at: $PIPX_PREK"
